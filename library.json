@@ -1,0 +1,12 @@
+{
+  "name": "NanoControl",
+  "keywords": "arduino, fishtank, light, rgb, controller",
+  "description": "",
+  "repository":
+  {
+    "type": "git",
+    "url": "https://github.com/shirriff/Arduino-IRremote.git"
+  },
+  "frameworks": "arduino",
+  "platforms": "atmelavr"
+}
