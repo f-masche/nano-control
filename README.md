@@ -5,7 +5,7 @@ Simple arduino fish tank controller software.
 - Display
 - Daylight simulation
 - RTC
-- Temperature sensor
+- Temperature monitoring
 - Temperature controlled cooling fan
 
 #### Example Display Message
