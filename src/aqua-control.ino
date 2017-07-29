@@ -3,131 +3,228 @@
 #include <DS1307RTC.h>
 #include <Time.h>
 #include <FastLED.h>
+#include <LiquidCrystal_PCF8574.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
-#define ON true
-#define OFF false
-#define SCHEDULE_INTERVAL 2000
-#define RED_PIN  9
-#define GREEN_PIN 10
-#define BLUE_PIN 6
+#define SET_TIME false
+#define TEMP_SENSOR_PIN 8
+#define MAX_TEMP 24
+#define FAN_PIN 6
+#define DEMO_MODE false
+#define DEMO_INTERVAL 600
 #define MAIN_LIGHT_PIN 3
-#define CO2_PIN 5
+#define SUNRISE 3600L * 7
+#define SUNSET 3600L * 21
 
-const byte PROGMEM gamma[] = {
-    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1,  1,
-    1,  1,  1,  1,  1,  1,  1,  1,  1,  2,  2,  2,  2,  2,  2,  2,
-    2,  3,  3,  3,  3,  3,  3,  3,  4,  4,  4,  4,  4,  5,  5,  5,
-    5,  6,  6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9, 10,
-   10, 10, 11, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 16, 16,
-   17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 24, 24, 25,
-   25, 26, 27, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 35, 35, 36,
-   37, 38, 39, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 50,
-   51, 52, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 66, 67, 68,
-   69, 70, 72, 73, 74, 75, 77, 78, 79, 81, 82, 83, 85, 86, 87, 89,
-   90, 92, 93, 95, 96, 98, 99,101,102,104,105,107,109,110,112,114,
-  115,117,119,120,122,124,126,127,129,131,133,135,137,138,140,142,
-  144,146,148,150,152,154,156,158,160,162,164,167,169,171,173,175,
-  177,180,182,184,186,189,191,193,196,198,200,203,205,208,210,213,
-  215,218,220,223,225,228,231,233,236,239,241,244,247,249,252,255 };
+OneWire oneWire(TEMP_SENSOR_PIN);
+DallasTemperature sensors(&oneWire);
+LiquidCrystal_PCF8574 lcd(0x3F);
 
-struct lightSchedule {
-  CRGB color;
-  byte intensity;
-  byte hour;
-  byte minute;
+const char *monthName[12] = {
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
 };
 
-struct toggleSchedule {
-  boolean status;
-  byte hour;
-  byte minute;
+byte temperatureChar[8] = {
+  B00100,
+  B01010,
+  B01010,
+  B01110,
+  B01110,
+  B11111,
+  B11111,
+  B01110,
 };
 
-const CRGB colorSunrise = CRGB(150, 120, 0);
-const CRGB colorSunset = CRGB(255, 60, 0);
-const CRGB colorDay = CRGB(0, 200, 255);
-const CRGB colorDayShade = CRGB(70, 110, 120);
-const CRGB colorNight = CRGB(0, 0, 0);
-
-const lightSchedule schedule[] = {
-  { color: colorNight,    intensity: 0,   hour: 0,  minute: 0  },
-  { color: colorSunrise,  intensity: 20,  hour: 7,  minute: 30 },
-  { color: colorDay,      intensity: 230, hour: 8,  minute: 30 },
-  { color: colorDayShade, intensity: 20,  hour: 14, minute: 30 },
-  { color: colorDay,      intensity: 230, hour: 16, minute: 30 },
-  { color: colorSunset,   intensity: 20,  hour: 20, minute: 30 },
-  { color: colorNight,    intensity: 0,   hour: 21, minute: 30 }
+byte fanChar[8] = {
+  B10101,
+  B01010,
+  B00000,
+  B10101,
+  B01010,
+  B00000,
+  B10101,
+  B01010,
 };
 
-const toggleSchedule co2Schedule[] = {
-  { status: ON,   hour: 7,  minute: 30 },
-  { status: OFF,  hour: 12, minute: 0  },
-  { status: ON,   hour: 16, minute: 30 },
-  { status: OFF,  hour: 19, minute: 0  }
+byte lightChar[8] = {
+  B00100,
+  B10101,
+  B01110,
+  B11111,
+  B01110,
+  B10101,
+  B00100,
+  B00000,
 };
 
-unsigned long lastScheduleInterval = 0;
-CRGB currentColor = CRGB(0, 0, 0);
-byte currentIntensity = 0;
-boolean currentCO2Status = OFF;
+tmElements_t tm;
+unsigned long demoTime = 3600 * 7L;
+unsigned long currentSeconds = 0;
+
+unsigned long getTime(byte hours, byte minutes);
 
 void setup() {
   Serial.begin(9600);
-  pinMode(RED_PIN, OUTPUT);
-  pinMode(GREEN_PIN, OUTPUT);
-  pinMode(BLUE_PIN, OUTPUT);
+  while (!Serial); // wait until Arduino Serial Monitor opens
+
+#if SET_TIME
+  setTime();
+#endif
+  setupLcd();
+  setupClock();
   pinMode(MAIN_LIGHT_PIN, OUTPUT);
-  pinMode(CO2_PIN, OUTPUT);
+  sensors.begin();
 }
 
 void loop() {
-  TimeElements tm;
-  unsigned long now = millis();
+#if DEMO_MODE
+ currentSeconds = demoTime;
+ demoTime += 5;
+#else
+  currentSeconds = second() + minute() * 60L + hour() * 3600L;
+#endif
 
-  if (now - lastScheduleInterval >= SCHEDULE_INTERVAL
-      && RTC.read(tm) && isValidTime(tm)) {
-    lastScheduleInterval = now;
+  byte lightIntensity = getSunlight(SUNRISE, SUNSET, currentSeconds);
+  setLight(lightIntensity);
+  lcd.setBacklight(lightIntensity >= 5 ? 1 : 0);
+  
+  float temperature = getTemperature();
+  byte fanSpeed = getFanSpeed(temperature, MAX_TEMP);
+  setFanSpeed(fanSpeed);
 
-    byte length = sizeof(schedule) / sizeof(lightSchedule);
-    for (byte i = length - 1; i > 0; i--) {
-      lightSchedule item = schedule[i];
-      if (tm.Hour > item.hour || (tm.Hour == item.hour && tm.Minute >= item.minute)) {
-        currentColor = item.color;
-        currentIntensity = item.intensity;
-        break;
-      }
-    }
+  printDisplay(lightIntensity, temperature, fanSpeed);
+}
 
-    length = sizeof(toggleSchedule) / sizeof(co2Schedule);
-    for (byte i = length - 1; i > 0; i--) {
-      toggleSchedule item = co2Schedule[i];
-      if (tm.Hour > item.hour || (tm.Hour == item.hour && tm.Minute >= item.minute)) {
-        currentCO2Status = item.status;
-        break;
-      }
-    }
+void setupLcd() {
+  lcd.begin(16, 2);
+  lcd.createChar(0, temperatureChar);
+  lcd.createChar(1, fanChar);
+  lcd.createChar(2, lightChar);
+  lcd.setBacklight(1);
+}
 
-    updateLight();
-    updateCO2();
+void setTime() {
+  if (getDate(__DATE__) && getTime(__TIME__)) {
+    RTC.write(tm);
   }
 }
 
-boolean isValidTime(const tmElements_t tm) {
-  return tm.Hour <= 24 && tm.Hour >= 0;
+void setupClock() {
+  setSyncProvider(RTC.get);
+  setSyncInterval(60);
+  if(timeStatus() != timeSet) {
+    Serial.println("Unable to sync with the RTC");
+  } else {
+    Serial.println("RTC has set the system time");
+  }
 }
 
-void updateLight() {
-  analogWrite(MAIN_LIGHT_PIN, 255 - currentIntensity);
-  showAnalogRGB(currentColor);
+
+
+float getTemperature() {
+  sensors.requestTemperatures();
+  return sensors.getTempCByIndex(0);
 }
 
-void updateCO2() {
-  digitalWrite(CO2_PIN, currentCO2Status == ON ? HIGH : LOW);
+byte getFanSpeed(float temperature, byte maxTemp) {
+  float dt = temperature - maxTemp;
+  if (dt > 0) {
+    return min(255, dt * 255);
+  } else {
+    return 0;
+  }
 }
 
-void showAnalogRGB(const CRGB& rgb) {
-  analogWrite(RED_PIN, pgm_read_byte(&gamma[rgb.r]));
-  analogWrite(GREEN_PIN, pgm_read_byte(&gamma[rgb.g]));
-  analogWrite(BLUE_PIN, pgm_read_byte(&gamma[rgb.b]));
+void setFanSpeed(byte fanSpeed) {
+  analogWrite(FAN_PIN, fanSpeed);
+}
+
+byte getSunlight(long sunrise, long sunset, long time) {
+  if (time < sunrise || time > sunset) {
+    return 0;
+  }
+
+  return cos((time - sunrise) * (PI * 2 / (sunset - sunrise)) - PI) * 127 + 127;
+}
+
+void setLight(byte intensity) {
+  analogWrite(MAIN_LIGHT_PIN, 255 - intensity);
+}
+
+unsigned long getTime(byte hours, byte minutes) {
+  return 3600L * hours + 60L * minutes;
+}
+
+void print2digits(int num) {
+  if(num < 10) {
+    lcd.print('0');
+  }
+  lcd.print(num);
+}
+
+void printDisplay(byte lightIntensity, float temperature, byte fanSpeed) {
+  lcd.setCursor(0,0);
+  print2digits(hour());
+  lcd.print(':');
+  print2digits(minute());
+  lcd.print(':');
+  print2digits(second());
+
+  int currentIntensityPercent = lightIntensity / 255.0 * 100;
+  if(currentIntensityPercent < 10) {
+    lcd.print(' ');
+  }
+  if(currentIntensityPercent < 100) {
+    lcd.print(' ');
+  }
+
+  lcd.print((char)2);
+  lcd.print(currentIntensityPercent);
+  lcd.print('%');
+
+  lcd.setCursor(0,1);
+  lcd.print((char)0);
+  lcd.print(temperature);
+  lcd.print((char)223);
+  lcd.print('C');
+  lcd.print(' ');
+
+  byte fanSpeedPercent = fanSpeed / 255.0 * 100;
+  if(fanSpeedPercent < 10) {
+    lcd.print(' ');
+  }
+  if(fanSpeedPercent < 100) {
+    lcd.print(' ');
+  }
+  lcd.print((char)1);
+  lcd.print(fanSpeedPercent);
+  lcd.print('%');
+}
+
+bool getDate(const char *str) {
+  char Month[12];
+  int Day, Year;
+  uint8_t monthIndex;
+
+  if (sscanf(str, "%s %d %d", Month, &Day, &Year) != 3) return false;
+  for (monthIndex = 0; monthIndex < 12; monthIndex++) {
+    if (strcmp(Month, monthName[monthIndex]) == 0) break;
+  }
+  if (monthIndex >= 12) return false;
+  tm.Day = Day;
+  tm.Month = monthIndex + 1;
+  tm.Year = CalendarYrToTm(Year);
+  return true;
+}
+
+bool getTime(const char *str) {
+  int Hour, Min, Sec;
+
+  if (sscanf(str, "%d:%d:%d", &Hour, &Min, &Sec) != 3) return false;
+  tm.Hour = Hour;
+  tm.Minute = Min;
+  tm.Second = Sec;
+  return true;
 }
