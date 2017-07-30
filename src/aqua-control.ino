@@ -2,7 +2,6 @@
 #include <Wire.h>
 #include <DS1307RTC.h>
 #include <Time.h>
-#include <FastLED.h>
 #include <LiquidCrystal_PCF8574.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
